@@ -6,11 +6,11 @@ from email.message import EmailMessage
 import aiosmtplib
 import asyncio
 import time
+import sys
 
 # THIRD PARTY
 
 from bs4 import BeautifulSoup
-from pymongo import MongoClient
 
 import requests
 import lxml
@@ -28,9 +28,9 @@ _WEBSOC = 'https://www.reg.uci.edu/perl/WebSoc?'
 _OPEN_SUBJECT = "[AntAlmanac Class Notification] Class opened"
 _WAIT_SUBJECT = "[AntAlmanac Class Notification] Class waitlisted"
 _CNCL_SUBJECT = "[AntAlmanac Class Notification] Class cancelled"
-# TODO: add to hidden config file
-_DB = MongoClient(secret._DATABASE_URL).admin
 
+_CHUNK_SAFE = 900
+_CHUNK_OPTIMIZED = -1
 
 # EXCEPTIONS
 
@@ -40,77 +40,40 @@ class HttpResponseError(Exception):
 
 # FUNCTIONS
 
-def print_time(begin, end, msg):
-    elapsed = f'{(end - begin):.4f}'
-    print(f'{msg:<30}: {elapsed:<12}')
-
-def fetch_statuses(chunked_codes: list, debug: bool=False):
+def fetch_notification_codes(debug: bool=False) -> dict:
     """
-        returns a dictionary of status where classes aren't closed
-        {
-            'open' : [codes],
-            'closed' : [codes],
-            'waitl' : [codes]
-        }
+        Fetches all codes to check for notification status
 
-        Args:
-            chunked_codes: nested list of chunked codes
-                [ [1, 2, 3, 4], [7, 10, 24], ...]
+        Args
+            debug: flag to enable debugging code
+
+        Return
+            dictionary of course codes
+            {
+                'code' : {
+                    'email' : [emails...],
+                    'sms' : [numbers...],
+                    'name' : 'class name'
+                }
+            }
     """
-    begin = time.time()
-    statuses = defaultdict(list)
+    raise NotImplementedError
 
-    for chunk in chunked_codes:
-        if debug: print('Chunk:', chunk)
-        params = {
-            'YearTerm' : _TERM,
-            'CourseCodes' : f'{chunk[0]}-{chunk[len(chunk) - 1]}',
-            'CancelledCourses' : 'Include',
-            'Submit' : 'XML'
-        }
-        begin_rsp = time.time()
-        rsp = requests.get(_WEBSOC, params=params)
-        end_rsp = time.time()
-        
-        if debug: 
-            print(rsp)
-            print_time(begin_rsp, end_rsp, '>>> Get response time:')
-        soup = BeautifulSoup(rsp.content, 'lxml')
-        # if debug: print(soup)
-
-        begin_it = time.time()
-        for item in soup.find_all('section'):
-            cc = item.find('course_code').text
-            # if debug: print(cc)
-            if int(cc) in chunk:
-                status = item.find('sec_status').text
-                if debug: print(f'Chunk({cc}): ', status)
-                statuses[status].append(cc)
-        end_it = time.time()
-        print_time(begin_it, end_it, '>>> Iteration time:')
-
-    end = time.time()
-    if debug: print_time(begin, end, '>>> Fetch status time:')
-    return statuses
-
-# Done
 def chunk_codes(codes: list, optimize: bool=False, debug: bool=False):
     """
-        chunks codes into ranges compatible with websoc
+        Chunks codes into ranges compatiable with websoc
 
-        currently chunks by range of 900
-        TODO: run analysis on websoc to find more efficient chunking range
+        currently only chunks into ranges of 900 max
+        TODO: build analysis tool for websoc to find optimized chunking range
 
-        Args:
-            codes: list of course codes to chunk, codes should be sorted
+        Args
+            codes: list of course codes to chunk, codes should be sorted from min to max
             optimize: TODO: optimize flag for wider range than 900
 
-        Return:
+        Return
             nested lists of code chunks
-            [ [1, 2, 3, 4], [7, 10, 24], ...]
+            [ [1, 2, 3, 4], [7, 10, 24], ... ]
     """
-    _SAFE = 900
-    _OPTIMIZED = -1
     chunks = []
 
     start = None
@@ -121,7 +84,7 @@ def chunk_codes(codes: list, optimize: bool=False, debug: bool=False):
             end = start = (idx, code)
             if debug: print('Starting', start, end)
             # continue
-        elif code - start[1] <= _SAFE:
+        elif code - start[1] <= _CHUNK_SAFE:
             end = (idx, code)
             if debug: print('New end', end)
             # continue
@@ -137,38 +100,6 @@ def chunk_codes(codes: list, optimize: bool=False, debug: bool=False):
     
     return chunks
 
-# In-progress, finish TODO
-def fetch_relations(debug: bool=False) -> dict:
-    """
-        fetches code, name, notifiers
-        
-        Returns
-            {
-                'code' : {
-                    'email' : [emails],
-                    'sms' : [numbers],
-                    'name' : 'class name'
-                }
-            }
-    """
-    begin = time.time()
-
-    relations = defaultdict(dict)
-
-    # TODO: modify to work with sms and email, add code if email or sms isnt empty
-    for course in _DB.queue.find():
-        if debug: print(course)
-        # check if people to notify
-        if len(course['email']) != 0:
-            relations[course['code']]['email'] = course['email']
-            relations[course['code']]['name'] = course['name']
-    
-    end = time.time()
-    if debug: print_time(begin, end, '>>> Fetching codes took')
-
-    return relations
-
-# Done
 def fetch_websoc(params: dict, debug: bool=False) -> BeautifulSoup:
     """
         Fetchs a websoc live page
@@ -207,11 +138,125 @@ def fetch_websoc(params: dict, debug: bool=False) -> BeautifulSoup:
     if debug: print_time(begin_rsp, end_rsp, '>>> Fetch websoc time:')
     return soup
 
-# In-progress, experiment with gmail API
+def fetch_code_statuses(chunks: list, debug: bool=False):
+    """
+        Fetches the status of all codes
+        TODO: look into fetching all chunks asynchronously and then merging the sets
+
+        Args:
+            chunked_codes: nested listof chunked codes
+                [ [1, 2, 3, 4], [7, 10, 24], ...]
+
+        Return
+            TODO: look into using a set instead of a list
+            dictionary of statuses and their codes as a list
+            {
+                'status' : [codes]
+            }
+    """
+    begin = time.time()
+    statuses = defaultdict(list)
+
+    for chunk in chunks:
+        if debug: print('Chunk:', chunk)
+        params = {
+            'YearTerm' : _TERM,
+            'CourseCodes' : f'{chunk[0]}-{chunk[len(chunk) - 1]}',
+            'CancelledCourses' : 'Include',
+            'Submit' : 'XML'
+        }
+        begin_rsp = time.time()
+        ######## OLD ##########
+        # rsp = requests.get(_WEBSOC, params=params)
+        # end_rsp = time.time()
+        
+        # if debug: 
+        #     print(rsp)
+        #     print_time(begin_rsp, end_rsp, '>>> Get response time:')
+        # soup = BeautifulSoup(rsp.content, 'lxml')
+        #######################
+        try:
+            soup = fetch_websoc(params)
+        except HttpResponseError as e:
+            print(e)
+            print('ERROR: chunk request failed', file=sys.stderr)
+            continue
+        # if debug: print(soup)
+
+        begin_it = time.time()
+        for item in soup.find_all('section'):
+            cc = item.find('course_code').text
+            # if debug: print(cc)
+            if int(cc) in chunk:
+                status = item.find('sec_status').text
+                if debug: print(f'Chunk({cc}): ', status)
+                statuses[status].append(cc)
+        end_it = time.time()
+        print_time(begin_it, end_it, '>>> Iteration time:')
+
+    end = time.time()
+    if debug: print_time(begin, end, '>>> Fetch status time:')
+    return statuses
+
+async def dispatch(statuses: dict, notification_codes: dict, debug: bool=False) -> set:
+    """
+        Takes each status and builds a dispatcher
+
+        Args
+            statuses: dictionary of all statuses
+            {
+
+            }
+
+            notification_codes: dictionary of the codes and their related information
+            {
+
+            }
+
+        Return
+            set of all dispatched codes
+            {codes, ...}
+    """
+    tasks = []
+    for status in statuses:
+        if status.lower() != 'open':
+            continue
+
+        temp = defaultdict(dict)
+
+        for code in statuses[code]:
+            temp[code] = notification_codes[code]
+        
+        tasks.append(send_emails(temp, status))
+    await asyncio.gather(*tasks)
+    # TODO: Return completed notifications, unions sets of dispatched codes
+    return statuses['OPEN']
+
+
+def format_content(status: str, name: str, code: str) -> str:
+    """
+        simply used to format the message content for an email based on status
+
+        Args
+            status: status of the course
+            name: name of the course
+            code: code of the course
+
+        Return
+            string content for the body of the email
+    """
+    if status == 'OPEN':
+        msg = f'Space opened in {name}. Code: {code}'
+    if status == 'Waitl':
+        msg = f'Waitlist opened for {name}. Code: {code}'
+    return f"""
+    Hello User,
+    {msg}
+    """
+
 async def send_emails(mail_list: dict, status: str):
     """
-        sends emails out for a specific status
-        TODO: implement with some emailing, gmail API or sendgrid
+        sends emails out for a specific status using gmail smtp
         
         Args:
             mail_list: dict of codes mapped to emails and names
@@ -231,14 +276,16 @@ async def send_emails(mail_list: dict, status: str):
         msg = EmailMessage()
         msg.set_content(format_content(status, info['name'], code)) 
         msg['To'] = secret._EMAIL_USERNAME
-
         msg['From'] = _FROM
+
         if status == 'OPEN':
             msg['Subject'] = _OPEN_SUBJECT
         elif status == 'Waitl':
             msg['Subject'] = _WAIT_SUBJECT
+
         msg['Bcc'] = ','.join(info['email'])
         _MESSAGES.append(msg)
+
     server = aiosmtplib.SMTP(
         hostname='smtp.gmail.com',
         port=587,
@@ -246,132 +293,44 @@ async def send_emails(mail_list: dict, status: str):
         username=secret._EMAIL_USERNAME,
         password=secret._EMAIL_PASSWORD
     )
+
     await server.connect()
-    tasks = []
-    # for msg
-    # print(_MESSAGES)
-    for msg in _MESSAGES:
-        print(str(msg))
-        tasks.append(server.send_message(msg))
+    tasks = [server.send_message(msg) for msg in _MESSAGES]
     await asyncio.gather(*tasks)
-    await server.quit()
+    await server.quit()    
 
-
-    
-
-
-
-#     tasks = []
-#     loop = asyncio.get_event_loop()
-#     for key in mailing:
-#         tasks.append(send_emails(mailing[key], key))
-#     loop.run_until_complete(asyncio.gather(*tasks))
-    
-
-def format_content(status, name, code):
-    if status == 'OPEN':
-        msg = f'Space opened in {name}. Code: {code}'
-    if status == 'Waitl':
-        msg = f'Waitlist opened for {name}. Code: {code}'
-    return f"""
-Hello User,
-{msg}
+# Not started
+async def send_text_messages(phone_list: dict, status: str):
     """
-
-# TESTING FUNCTIONS
-
-def mock_fetch_websoc(file_path: str) -> BeautifulSoup:
+        Sends text messages
     """
-        used to load an mock xml file of websoc results for unit testing
-        Args:
-            file_path: path to the mock xml
-        
-        Results:
-            a BeautifulSoup object
+    raise NotImplementedError
 
+def remove_registered_notifications(completed_codes: set, debug: bool=False) -> None:
     """
-    with open(file_path, 'r') as f:
-        whole = f.read()
-        return BeautifulSoup(whole, 'lxml')
+        Accesses the database and removes all the data for a completed notification dispatch
 
-def mock_insert_notification():
-    pass    
+        Args
+            completed_notifications: dictionary of codes and related information to remove due to successful dispatch
+    """
+    raise NotImplementedError
+
+def print_time(begin, end, msg):
+    elapsed = f'{(end - begin):.4f}'
+    print(f'{msg:<30}: {elapsed:<12}')
 
 # MAIN
 
+def main():
+    while True:
+        notification_codes = fetch_notification_codes()
+        chunks = chunk_codes(list(notification_codes).sort)
+        statuses = fetch_code_statuses(chunks)
 
+        completed_notifications = dispatch(statuses, notification_codes)
+
+        remove_registered_notifications(completed_notifications)
 
 if __name__ == '__main__':
-    pass
-    # soup = fetch_websoc(params={
-    #         'YearTerm' : _TERM,
-    #         'CourseCodes' : f'34000-37000',
-    #         'CancelledCourses' : 'Include',
-    #         'Submit' : 'XML'
-    #     }, debug=True)
-    # print(soup)
-
-    ##################
-    # EMAIL TEST
-    # test_list = {
-    #     '420' : {
-    #         'email' : ['yayeet', 'apatheticlamp@gmail.com','vacneyelk@gmail.com','nycoraxency@gmail.com','kavance@uci.edu'],
-    #         'name' : 'Aslan\'s weed class'
-    #     },
-    #     '69' : {
-    #         'email' : ['kavance@uci.edu', 'kavance@uci.edu','kavance@uci.edu'],
-    #         'name' : 'Aslan\'s sex class'
-    #     }
-    # }
-    # loop = asyncio.get_event_loop()
-    # loop.run_until_complete(send_emails(test_list, 'OPEN'))
-    ##################
-
-#     names = ['kyle', 'nate', 'aslan', 'isoo', 'sid', 'nic', 'alexis', 'rafool']
-#     from pprint import pprint
-#     s = fetch_statuses(
-#             [
-#                 [34020, 34062, 35940, 35970, 36105, 36600, 36720, 37000]
-#             ], 
-#             debug=True
-#         )
-#     pprint(s)
-#     import random
-#     mailing = defaultdict(dict)
-#     for status in s:
-#         for code in s[status]:
-#             # mailing[status] = {
-#             #         code : {
-#             #                 'name' : 'Dope Ass Class 420',
-#             #                 'email' : []    
-#             #             }
-#             #     }
-#             mailing[status][code] = {}
-#             mailing[status][code]['name'] = 'Dope Ass Class 420'
-#             mailing[status][code]['email'] = []
-#             for _ in range(random.randint(1, 5)):
-#                 mailing[status][code]['email'].append(
-#                         names[ random.randint(0, len(names) - 1)]    
-#                     )
-#     pprint(mailing)
-#     tasks = []
-#     loop = asyncio.get_event_loop()
-#     for key in mailing:
-#         tasks.append(send_emails(mailing[key], key))
-#     loop.run_until_complete(asyncio.gather(*tasks))
-
-
-    # for status, codes in s.items():
-    #     for code in codes:
-    #         mailing[code] = {
-    #                 'name' : 'Dope Ass Class 420',
-    #                 'status' : status,
-    #                 'email' : []  
-    #             }
-    #         for _ in range(random.randrange(0, 5)):
-    #             mailing[code]['email'].append(
-    #                     names[ random.randint(0, len(names) - 1) ]
-    #                 )
-    # pprint(mailing)
-
-
+    main()
+    
