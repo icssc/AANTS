@@ -2,6 +2,8 @@
 
 AntAlmanac Notification Transmition System (AANTS) is a tool to notify AntAlmanac users when a course either opens, waitlisted, or cancelled.
 
+**NOTE**: out of date, moving from mongo to dynamodb
+
 *Add more details here*
 
 ## API Access
