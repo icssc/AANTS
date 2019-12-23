@@ -1,4 +1,4 @@
-# AntAlmanac Notification Transmition System - Currently underproduction
+# AntAlmanac Notification Transmission System - Currently underproduction
 
 AntAlmanac Notification Transmition System (AANTS) is a tool to notify AntAlmanac users when a course either opens, waitlisted, or cancelled.
 
@@ -22,23 +22,23 @@ NOTE: Other versions of python may work but have not been tested. AANTS may also
 
 #### Install MongoDB
 
-sudo apt update
+`sudo apt update`
 
-sudo apt install -y mongodb
+`sudo apt install -y mongodb`
 
 Gather information for your database with 
 
-mongo --eval 'db.runCommand({ connectionStatus : 1 })'
+`mongo --eval 'db.runCommand({ connectionStatus : 1 })'`
 
 __Useful commands__
 
-sudo systemctl status mongodb
+`sudo systemctl status mongodb`
 
-sudo systemctl stop mongodb
+`sudo systemctl stop mongodb`
 
-sudo systemctl start mongodb
+`sudo systemctl start mongodb`
 
-sudo systemctl restart mongodb
+`sudo systemctl restart mongodb`
 
 #### Create a python virtual environment
 
