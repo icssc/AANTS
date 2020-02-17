@@ -9,21 +9,29 @@ import time
 import sys
 
 # THIRD PARTY
-
+import pymongo
 from bs4 import BeautifulSoup
 
 import requests
-import lxml
 
 # PROJECT
+import config
 
-import secret
+# import secret
 
 # CONSTANTS
+db = pymongo.MongoClient(config.MONGODB_URI).aants_db
+# result = db.sms_notifs.insert_one({
+#     '454543': {
+#         'email': ['email@new.com'],
+#         'sms': ['555-555-5555'],
+#         'name': 'THE CLASS'
+#     }
+# })
 
 # NOTE: Must update each term
-# TODO: Find a way to dynamically update without manual intervtion
-_TERM = '2019-92'
+# TODO: Find a way to dynamically update without manual intervention
+_TERM = '2020-14'
 _WEBSOC = 'https://www.reg.uci.edu/perl/WebSoc?'
 _OPEN_SUBJECT = "[AntAlmanac Class Notification] Class opened"
 _WAIT_SUBJECT = "[AntAlmanac Class Notification] Class waitlisted"
@@ -32,15 +40,17 @@ _CNCL_SUBJECT = "[AntAlmanac Class Notification] Class cancelled"
 _CHUNK_SAFE = 900
 _CHUNK_OPTIMIZED = -1
 
+
 # EXCEPTIONS
 
 class HttpResponseError(Exception):
     def __init__(self, message):
         super().__init__(message)
 
+
 # FUNCTIONS
 
-def fetch_notification_codes(debug: bool=False) -> dict:
+def fetch_notification_codes(debug: bool = False) -> dict:
     """
         Fetches all codes to check for notification status
 
@@ -48,18 +58,25 @@ def fetch_notification_codes(debug: bool=False) -> dict:
             debug: flag to enable debugging code
 
         Return
-            dictionary of course codes
-            {
+            list of dictionaries of course codes
+            [{
                 'code' : {
                     'email' : [emails...],
                     'sms' : [numbers...],
                     'name' : 'class name'
                 }
-            }
+            }, ...]
     """
-    raise NotImplementedError
+    dictionary_version = {}
 
-def chunk_codes(codes: list, optimize: bool=False, debug: bool=False):
+    for document in db.sms_notifs.find():
+        section_code = tuple(document.keys())[1]
+        dictionary_version[int(section_code)] = document[section_code]
+
+    return dictionary_version
+
+
+def chunk_codes(codes: list, optimize: bool = False, debug: bool = False):
     """
         Chunks codes into ranges compatiable with websoc
 
@@ -97,10 +114,11 @@ def chunk_codes(codes: list, optimize: bool=False, debug: bool=False):
     # capture final chunk if not caught by for loop
     if end[0] == len(codes) - 1:
         chunks.append(codes[start[0]:end[0] + 1])
-    
+
     return chunks
 
-def fetch_websoc(params: dict, debug: bool=False) -> BeautifulSoup:
+
+def fetch_websoc(params: dict, debug: bool = False) -> BeautifulSoup:
     """
         Fetchs a websoc live page
         Args
@@ -112,19 +130,23 @@ def fetch_websoc(params: dict, debug: bool=False) -> BeautifulSoup:
                 'CancelledCourses' : 'Include',
                 'Submit' : 'XML'
             }
-        
+
         Raises
             HttpResponseError: GET return status code >= 400
 
         Returns
             a BeautifulSoup object
     """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:72.0) Gecko/20100101 Firefox/72.0',
+    }
+
     begin_rsp = time.time()
-    rsp = requests.get(_WEBSOC, params=params)
+    rsp = requests.get(_WEBSOC, params=params, headers=headers)
 
     if rsp.status_code < 300 and debug:
         print(f'>>> Response code: {rsp.status_code}')
-    elif rsp.status_code >= 300 and rsp.status_code < 400 and debug:
+    elif 300 <= rsp.status_code < 400 and debug:
         print(f'>>> Redirection: {rsp.status_code}')
     elif rsp.status_code >= 400:
         raise HttpResponseError(f'Websoc status code {rsp.status_code}')
@@ -138,7 +160,8 @@ def fetch_websoc(params: dict, debug: bool=False) -> BeautifulSoup:
     if debug: print_time(begin_rsp, end_rsp, '>>> Fetch websoc time:')
     return soup
 
-def fetch_code_statuses(chunks: list, debug: bool=False):
+
+def fetch_code_statuses(chunks: list, debug: bool = False):
     """
         Fetches the status of all codes
         TODO: look into fetching all chunks asynchronously and then merging the sets
@@ -160,17 +183,17 @@ def fetch_code_statuses(chunks: list, debug: bool=False):
     for chunk in chunks:
         if debug: print('Chunk:', chunk)
         params = {
-            'YearTerm' : _TERM,
-            'CourseCodes' : f'{chunk[0]}-{chunk[len(chunk) - 1]}',
-            'CancelledCourses' : 'Include',
-            'Submit' : 'XML'
+            'YearTerm': _TERM,
+            'CourseCodes': f'{chunk[0]}-{chunk[len(chunk) - 1]}',
+            'CancelledCourses': 'Include',
+            'Submit': 'XML'
         }
         begin_rsp = time.time()
         ######## OLD ##########
         # rsp = requests.get(_WEBSOC, params=params)
         # end_rsp = time.time()
-        
-        # if debug: 
+
+        # if debug:
         #     print(rsp)
         #     print_time(begin_rsp, end_rsp, '>>> Get response time:')
         # soup = BeautifulSoup(rsp.content, 'lxml')
@@ -181,6 +204,7 @@ def fetch_code_statuses(chunks: list, debug: bool=False):
             print(e)
             print('ERROR: chunk request failed', file=sys.stderr)
             continue
+
         # if debug: print(soup)
 
         begin_it = time.time()
@@ -198,7 +222,8 @@ def fetch_code_statuses(chunks: list, debug: bool=False):
     if debug: print_time(begin, end, '>>> Fetch status time:')
     return statuses
 
-async def dispatch(statuses: dict, notification_codes: dict, debug: bool=False) -> set:
+
+async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False) -> set:
     """
         Takes each status and builds a dispatcher
 
@@ -226,7 +251,7 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool=False) 
 
         for code in statuses[code]:
             temp[code] = notification_codes[code]
-        
+
         tasks.append(send_emails(temp, status))
     await asyncio.gather(*tasks)
     # TODO: Return completed notifications, unions sets of dispatched codes
@@ -254,10 +279,11 @@ def format_content(status: str, name: str, code: str) -> str:
     {msg}
     """
 
+
 async def send_emails(mail_list: dict, status: str):
     """
         sends emails out for a specific status using gmail smtp
-        
+
         Args:
             mail_list: dict of codes mapped to emails and names
             {
@@ -275,7 +301,7 @@ async def send_emails(mail_list: dict, status: str):
     for code, info in mail_list.items():
         msg = EmailMessage()
         msg.set_content(format_content(status, info['name'], code)) 
-        msg['To'] = secret._EMAIL_USERNAME
+        msg['To'] = config.EMAIL_USERNAME
         msg['From'] = _FROM
 
         if status == 'OPEN':
@@ -290,14 +316,15 @@ async def send_emails(mail_list: dict, status: str):
         hostname='smtp.gmail.com',
         port=587,
         start_tls=True,
-        username=secret._EMAIL_USERNAME,
-        password=secret._EMAIL_PASSWORD
+        username=config.EMAIL_USERNAME,
+        password=config.EMAIL_PASSWORD
     )
 
     await server.connect()
     tasks = [server.send_message(msg) for msg in _MESSAGES]
     await asyncio.gather(*tasks)
-    await server.quit()    
+    await server.quit()
+
 
 # Not started
 async def send_text_messages(phone_list: dict, status: str):
@@ -306,7 +333,8 @@ async def send_text_messages(phone_list: dict, status: str):
     """
     raise NotImplementedError
 
-def remove_registered_notifications(completed_codes: set, debug: bool=False) -> None:
+
+def remove_registered_notifications(completed_codes: set, debug: bool = False) -> None:
     """
         Accesses the database and removes all the data for a completed notification dispatch
 
@@ -315,22 +343,22 @@ def remove_registered_notifications(completed_codes: set, debug: bool=False) -> 
     """
     raise NotImplementedError
 
+
 def print_time(begin, end, msg):
     elapsed = f'{(end - begin):.4f}'
     print(f'{msg:<30}: {elapsed:<12}')
 
+
 # MAIN
 
 def main():
-    while True:
-        notification_codes = fetch_notification_codes()
-        chunks = chunk_codes(list(notification_codes).sort)
-        statuses = fetch_code_statuses(chunks)
+    # while True:
+    notification_codes = fetch_notification_codes()
+    chunks = chunk_codes(sorted(list(notification_codes)))
+    statuses = fetch_code_statuses(chunks)
+    completed_notifications = dispatch(statuses, notification_codes)
+    # remove_registered_notifications(completed_notifications)
 
-        completed_notifications = dispatch(statuses, notification_codes)
-
-        remove_registered_notifications(completed_notifications)
 
 if __name__ == '__main__':
     main()
-    
