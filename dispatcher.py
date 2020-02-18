@@ -278,10 +278,10 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False
         for code in codes:
             temp[code] = notification_codes[code]
 
-        tasks.append(send_emails(temp, status))
+        # tasks.append(send_emails(temp, status))
         send_text_messages(temp, status)
 
-    await asyncio.gather(*tasks)
+    # await asyncio.gather(*tasks)
     # TODO: Return completed notifications, unions sets of dispatched codes
     return statuses['OPEN']
 
@@ -364,9 +364,9 @@ def send_text_messages(phone_list: dict, status: str):
     _MESSAGES = []
     for code, info in phone_list.items():
         msg = format_content(status, info['name'], code)
-        for num in info.sms:
-            pass
-            # aws.publish(PhoneNumber=f"+1{num}", Message=msg)
+
+        for num in info['sms']:
+            aws.publish(PhoneNumber=f"+1{num}", Message=msg)
 
 def remove_registered_notifications(completed_codes: dict, debug: bool = False) -> None:
     """
@@ -406,6 +406,6 @@ async def main():
 
 
 if __name__ == '__main__':
-    # loop = asyncio.get_event_loop()
-    # loop.run_until_complete(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
 
