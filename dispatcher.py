@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from email.message import EmailMessage
+import urllib.parse
 
 import aiosmtplib
 import asyncio
@@ -9,6 +10,7 @@ import time
 import sys
 
 # THIRD PARTY
+import boto3
 import pymongo
 from bs4 import BeautifulSoup
 
@@ -17,10 +19,14 @@ import requests
 # PROJECT
 import config
 
-# import secret
-
 # CONSTANTS
 db = pymongo.MongoClient(config.MONGODB_URI).aants_db
+aws = boto3.client(
+    "sns",
+    aws_access_key_id=config.AWS_ACCESSKEYID,
+    aws_secret_access_key=config.AWS_SECRECTKEY,
+    region_name="us-east-1"
+)
 # result = db.sms_notifs.insert_one({
 #     '454543': {
 #         'email': ['email@new.com'],
@@ -39,6 +45,7 @@ _CNCL_SUBJECT = "[AntAlmanac Class Notification] Class cancelled"
 
 _CHUNK_SAFE = 900
 _CHUNK_OPTIMIZED = -1
+TINY_URL_API = "http://tinyurl.com/api-create.php"
 
 
 # EXCEPTIONS
@@ -49,6 +56,19 @@ class HttpResponseError(Exception):
 
 
 # FUNCTIONS
+
+def shorten(long_url: str) -> str:
+    """Uses tinyurl to shorten long urls"""
+
+    try:
+        url = TINY_URL_API + "?" + urllib.parse.urlencode({"url": long_url})
+        res = requests.get(url)
+        # print("LONG URL:", long_url)
+        # print("SHORT URL:", res.text)
+        return res.text if len(res.text) < 50 else long_url
+    except Exception as e:
+        return long_url
+
 
 def fetch_notification_codes(debug: bool = False) -> dict:
     """
@@ -274,14 +294,17 @@ def format_content(status: str, name: str, code: str) -> str:
         Return
             string content for the body of the email
     """
+    webreg_tinyurl = shorten(_WEBSOC + urllib.parse.urlencode([('YearTerm', _TERM), ('CourseCodes', code)]))
+    add_back_tinyurl = ''
+
     if status == 'OPEN':
         msg = f'Space opened in {name}. Code: {code}'
     if status == 'Waitl':
         msg = f'Waitlist opened for {name}. Code: {code}'
     return f"""
-    Hello User,
-    {msg}
-    """
+AntAlmanac:
+{msg} ({webreg_tinyurl})
+To add back to to watchlist: {add_back_tinyurl}"""
 
 
 async def send_emails(mail_list: dict, status: str):
@@ -304,7 +327,7 @@ async def send_emails(mail_list: dict, status: str):
     _MESSAGES = []
     for code, info in mail_list.items():
         msg = EmailMessage()
-        msg.set_content(format_content(status, info['name'], code)) 
+        msg.set_content(format_content(status, info['name'], code))
         msg['To'] = config.EMAIL_USERNAME
         msg['From'] = _FROM
 
@@ -335,6 +358,7 @@ async def send_text_messages(phone_list: dict, status: str):
     """
         Sends text messages
     """
+    # aws.publish(PhoneNumber="+1" + num, Message=sms_msg)
     raise NotImplementedError
 
 
