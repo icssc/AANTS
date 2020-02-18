@@ -87,13 +87,16 @@ def fetch_notification_codes(debug: bool = False) -> dict:
                 }
             }, ...]
     """
-    dictionary_version = {}
+    notifications = {}
+    result = db['notifications'].find({}, {'_id' : 0})
+    for doc in result:
+        notifications[doc['code']] = {
+                'email' : doc['email'], 
+                'sms' : doc['sms'], 
+                'name' : doc['name']
+            }
 
-    for document in db.sms_notifs.find():
-        section_code = tuple(document.keys())[1]
-        dictionary_version[section_code] = document[section_code]
-
-    return dictionary_version
+    return notifications
 
 
 def chunk_codes(codes: list, optimize: bool = False, debug: bool = False):
@@ -266,7 +269,6 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False
             set of all dispatched codes
             {codes, ...}
     """
-    tasks = []
     for status, codes in statuses.items():
         if status.lower() != 'open':
             continue
@@ -355,7 +357,6 @@ async def send_emails(mail_list: dict, status: str):
     await server.quit()
 
 
-# Not started
 def send_text_messages(phone_list: dict, status: str):
     """
         Sends text messages
@@ -367,14 +368,24 @@ def send_text_messages(phone_list: dict, status: str):
             pass
             # aws.publish(PhoneNumber=f"+1{num}", Message=msg)
 
-def remove_registered_notifications(completed_codes: set, debug: bool = False) -> None:
+def remove_registered_notifications(completed_codes: dict, debug: bool = False) -> None:
     """
         Accesses the database and removes all the data for a completed notification dispatch
 
         Args
             completed_notifications: dictionary of codes and related information to remove due to successful dispatch
+            {
+                <code> : {
+                    'email' : [list of emails],
+                    'sms' : [list of sms numbers]
+                }, ...
+            }
     """
-    raise NotImplementedError
+    for code, info in completed_codes.items():
+        db['notifications'].update_one(
+                                        {'code' : code},
+                                        {'$pull' : {'email' : {'$in' : info['email']} } }
+                                        )
 
 
 def print_time(begin, end, msg):
@@ -395,5 +406,6 @@ async def main():
 
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    # loop = asyncio.get_event_loop()
+    # loop.run_until_complete(main())
+
