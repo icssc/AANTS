@@ -7,9 +7,11 @@ import urllib.parse
 import aiosmtplib
 import asyncio
 import time
+import random
 import sys
 
 # THIRD PARTY
+import lxml
 import boto3
 import pymongo
 from bs4 import BeautifulSoup
@@ -42,6 +44,20 @@ _WEBSOC = 'https://www.reg.uci.edu/perl/WebSoc?'
 _OPEN_SUBJECT = "[AntAlmanac Class Notification] Class opened"
 _WAIT_SUBJECT = "[AntAlmanac Class Notification] Class waitlisted"
 _CNCL_SUBJECT = "[AntAlmanac Class Notification] Class cancelled"
+_DISPATCH = False
+# TODO: Determinie if we want to rotate headers
+_USER_AGENT_HEADERS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.106 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.106 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.106 Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 8.0.0;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.99 Mobile Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 12_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/80.0.3987.95 Mobile/15E148 Safari/605.1',
+    'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:54.0) Gecko/20100101 Firefox/73.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:61.0) Gecko/20100101 Firefox/73.0',
+    'Mozilla/5.0 (X11; Linux i586; rv:31.0) Gecko/20100101 Firefox/73.0',
+    'Mozilla/5.0 (Android 8.0.0; Mobile; rv:61.0) Gecko/61.0 Firefox/68.0',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 12_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/22.0 Mobile/16B92 Safari/605.1.15'
+]
 
 _CHUNK_SAFE = 900
 _CHUNK_OPTIMIZED = -1
@@ -88,7 +104,7 @@ def fetch_notification_codes(debug: bool = False) -> dict:
             }, ...]
     """
     notifications = {}
-    result = db['notifications'].find({}, {'_id' : 0})
+    result = db['test'].find({}, {'_id' : 0})
     for doc in result:
         notifications[doc['code']] = {
                 'email' : doc['email'], 
@@ -239,7 +255,7 @@ def fetch_code_statuses(chunks: list, debug: bool = False):
             cc = item.find('course_code').text
             # if debug: print(cc)
             if cc in chunk:
-                status = item.find('sec_status').text
+                status = item.find('sec_status').text.lower()
                 if debug: print(f'Chunk({cc}): ', status)
                 statuses[status].append(cc)
         end_it = time.time()
@@ -250,40 +266,56 @@ def fetch_code_statuses(chunks: list, debug: bool = False):
     return statuses
 
 
-async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False) -> set:
+async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False) -> dict:
     """
         Takes each status and builds a dispatcher
 
         Args
             statuses: dictionary of all statuses
             {
-
+                'OPEN' : [<str_codes>, ...],
+                'Waitl' : [<str_codes>, ...],
+                ...
             }
 
             notification_codes: dictionary of the codes and their related information
             {
-
+                <str:code> : {
+                    'email' : [<str:email>...],
+                    'sms' : [<str:numbers>...],
+                    'name' : <str:class_name>
             }
 
         Return
-            set of all dispatched codes
-            {codes, ...}
+            dict of all dispatched codes and info
+            {
+                <str:code> : {
+                    'email' : [<str:email>...],
+                    'sms' : [<str:numbers>...]
+            }
     """
-    for status, codes in statuses.items():
-        if status.lower() != 'open':
-            continue
+    # print('Statuses\n', statuses)
+    # print('Notifications\n', notification_codes)
 
-        temp = defaultdict(dict)
+    open_codes = {}
+    for code in statuses['open']:
+        open_codes[code] = notification_codes[code]
+    if _DISPATCH:
+        await send_emails(open_codes, 'open')
+        send_text_messages(open_codes, 'open')
 
-        for code in codes:
-            temp[code] = notification_codes[code]
+    
+    waitl_codes = {}
+    for code in statuses['waitl']:
+        waitl_codes[code] = notification_codes[code]
+    if _DISPATCH:
+        await send_emails(waitl_codes, 'waitlisted')
+        send_text_messages(waitl_codes, 'waitl')
 
-        # tasks.append(send_emails(temp, status))
-        send_text_messages(temp, status)
-
-    # await asyncio.gather(*tasks)
-    # TODO: Return completed notifications, unions sets of dispatched codes
-    return statuses['OPEN']
+    # back time complexity we ignore
+    completed = open_codes
+    completed.update(waitl_codes)
+    return completed
 
 
 def format_content(status: str, name: str, code: str) -> str:
@@ -301,9 +333,9 @@ def format_content(status: str, name: str, code: str) -> str:
     webreg_tinyurl = shorten(_WEBSOC + urllib.parse.urlencode([('YearTerm', _TERM), ('CourseCodes', code)]))
     add_back_tinyurl = ''
 
-    if status == 'OPEN':
+    if status == 'open':
         msg = f'Space opened in {name}. Code: {code}'
-    if status == 'Waitl':
+    if status == 'waitl':
         msg = f'Waitlist opened for {name}. Code: {code}'
     return f"""
 AntAlmanac:
@@ -335,9 +367,9 @@ async def send_emails(mail_list: dict, status: str):
         msg['To'] = config.EMAIL_USERNAME
         msg['From'] = _FROM
 
-        if status == 'OPEN':
+        if status == 'open':
             msg['Subject'] = _OPEN_SUBJECT
-        elif status == 'Waitl':
+        elif status == 'waitl':
             msg['Subject'] = _WAIT_SUBJECT
 
         msg['Bcc'] = ','.join(info['email'])
@@ -368,6 +400,7 @@ def send_text_messages(phone_list: dict, status: str):
         for num in info['sms']:
             aws.publish(PhoneNumber=f"+1{num}", Message=msg)
 
+
 def remove_registered_notifications(completed_codes: dict, debug: bool = False) -> None:
     """
         Accesses the database and removes all the data for a completed notification dispatch
@@ -382,9 +415,13 @@ def remove_registered_notifications(completed_codes: dict, debug: bool = False) 
             }
     """
     for code, info in completed_codes.items():
+        print(code)
+        print(info['email'])
         db['notifications'].update_one(
                                         {'code' : code},
-                                        {'$pull' : {'email' : {'$in' : info['email']} } }
+                                        {'$pull' : {'email' : {'$in' : info['email']},
+                                                    'sms' : {'$in' : info['sms']}
+                                                   } }
                                         )
 
 
@@ -395,17 +432,29 @@ def print_time(begin, end, msg):
 
 # MAIN
 
-async def main():
-    # while True:
-    notification_codes = fetch_notification_codes()
-    chunks = chunk_codes(sorted(list(notification_codes)))
-    statuses = fetch_code_statuses(chunks)
+async def main(loop: bool=False):
+    while True:
+        notification_codes = fetch_notification_codes()
+        chunks = chunk_codes(sorted(list(notification_codes)))
+        statuses = fetch_code_statuses(chunks)
 
-    completed_notifications = await dispatch(statuses, notification_codes)
-    # remove_registered_notifications(completed_notifications)
+        completed_notifications = await dispatch(statuses, notification_codes)
+        remove_registered_notifications(completed_notifications)
+        print('Waiting')
+        await asyncio.sleep(random.randint(5, 10))
+        print('Waited')
+        if loop == False:
+            break
 
 
 if __name__ == '__main__':
+    try:
+        production = sys.argv[1] == '--run'
+    except IndexError:
+        production = False
+    if production:
+        print('RUNNING PRODUCTION')
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    loop.run_until_complete(main(production))
+
 
