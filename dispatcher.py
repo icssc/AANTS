@@ -71,7 +71,7 @@ def fetch_notification_codes(debug: bool = False) -> dict:
 
     for document in db.sms_notifs.find():
         section_code = tuple(document.keys())[1]
-        dictionary_version[int(section_code)] = document[section_code]
+        dictionary_version[section_code] = document[section_code]
 
     return dictionary_version
 
@@ -96,7 +96,10 @@ def chunk_codes(codes: list, optimize: bool = False, debug: bool = False):
     start = None
     end = None
     for idx, code in enumerate(codes):
+        code = int(code)
+
         if debug: print()
+
         if start is None:
             end = start = (idx, code)
             if debug: print('Starting', start, end)
@@ -109,6 +112,7 @@ def chunk_codes(codes: list, optimize: bool = False, debug: bool = False):
             if debug: print('Chunking', codes[start[0]:idx])
             chunks.append(codes[start[0]:idx])
             start = end = (idx, code)
+
         print(start, end)
 
     # capture final chunk if not caught by for loop
@@ -211,7 +215,7 @@ def fetch_code_statuses(chunks: list, debug: bool = False):
         for item in soup.find_all('section'):
             cc = item.find('course_code').text
             # if debug: print(cc)
-            if int(cc) in chunk:
+            if cc in chunk:
                 status = item.find('sec_status').text
                 if debug: print(f'Chunk({cc}): ', status)
                 statuses[status].append(cc)
@@ -243,13 +247,13 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False
             {codes, ...}
     """
     tasks = []
-    for status in statuses:
+    for status, codes in statuses.items():
         if status.lower() != 'open':
             continue
 
         temp = defaultdict(dict)
 
-        for code in statuses[code]:
+        for code in codes:
             temp[code] = notification_codes[code]
 
         tasks.append(send_emails(temp, status))
@@ -351,14 +355,17 @@ def print_time(begin, end, msg):
 
 # MAIN
 
-def main():
+async def main():
     # while True:
     notification_codes = fetch_notification_codes()
     chunks = chunk_codes(sorted(list(notification_codes)))
     statuses = fetch_code_statuses(chunks)
-    completed_notifications = dispatch(statuses, notification_codes)
+
+    completed_notifications = await dispatch(statuses, notification_codes)
     # remove_registered_notifications(completed_notifications)
 
 
 if __name__ == '__main__':
-    main()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
+    # await main()
