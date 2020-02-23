@@ -104,13 +104,13 @@ def fetch_notification_codes(debug: bool = False) -> dict:
             }, ...]
     """
     notifications = {}
-    result = db['test'].find({}, {'_id' : 0})
+    result = db['test'].find({}, {'_id': 0})
     for doc in result:
         notifications[doc['code']] = {
-                'email' : doc['email'], 
-                'sms' : doc['sms'], 
-                'name' : doc['name']
-            }
+            'email': doc['email'],
+            'sms': doc['sms'],
+            'name': doc['name']
+        }
 
     return notifications
 
@@ -304,7 +304,6 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False
         await send_emails(open_codes, 'open')
         send_text_messages(open_codes, 'open')
 
-    
     waitl_codes = {}
     for code in statuses['waitl']:
         waitl_codes[code] = notification_codes[code]
@@ -318,7 +317,7 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False
     return completed
 
 
-def format_content(status: str, name: str, code: str) -> str:
+def format_content(status: str, name: str, code: str, short: bool, sms: str, email: str) -> str:
     """
         simply used to format the message content for an email based on status
 
@@ -326,12 +325,22 @@ def format_content(status: str, name: str, code: str) -> str:
             status: status of the course
             name: name of the course
             code: code of the course
-
+            short: whether to shorten the links or not
         Return
             string content for the body of the email
     """
-    webreg_tinyurl = shorten(_WEBSOC + urllib.parse.urlencode([('YearTerm', _TERM), ('CourseCodes', code)]))
-    add_back_tinyurl = ''
+
+    webreg_url = shorten(_WEBSOC + urllib.parse.urlencode([('YearTerm', _TERM), ('CourseCodes', code)]))
+    add_back_url = shorten(config.API_URL + '?' + urllib.parse.urlencode(
+        {'code': code,
+         'name': name,
+         'sms': sms,
+         'email': email,
+         'command': 'update'}))
+
+    if short:
+        webreg_url = shorten(webreg_url)
+        add_back_url = shorten(add_back_url)
 
     if status == 'open':
         msg = f'Space opened in {name}. Code: {code}'
@@ -339,8 +348,8 @@ def format_content(status: str, name: str, code: str) -> str:
         msg = f'Waitlist opened for {name}. Code: {code}'
     return f"""
 AntAlmanac:
-{msg} ({webreg_tinyurl})
-To add back to to watchlist: {add_back_tinyurl}"""
+{msg} ({webreg_url})
+To add back to the watchlist: {add_back_url}"""
 
 
 async def send_emails(mail_list: dict, status: str):
@@ -418,11 +427,11 @@ def remove_registered_notifications(completed_codes: dict, debug: bool = False) 
         print(code)
         print(info['email'])
         db['notifications'].update_one(
-                                        {'code' : code},
-                                        {'$pull' : {'email' : {'$in' : info['email']},
-                                                    'sms' : {'$in' : info['sms']}
-                                                   } }
-                                        )
+            {'code': code},
+            {'$pull': {'email': {'$in': info['email']},
+                       'sms': {'$in': info['sms']}
+                       }}
+        )
 
 
 def print_time(begin, end, msg):
@@ -432,7 +441,7 @@ def print_time(begin, end, msg):
 
 # MAIN
 
-async def main(loop: bool=False):
+async def main(loop: bool = False):
     while True:
         notification_codes = fetch_notification_codes()
         chunks = chunk_codes(sorted(list(notification_codes)))
@@ -456,5 +465,3 @@ if __name__ == '__main__':
         print('RUNNING PRODUCTION')
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main(production))
-
-
