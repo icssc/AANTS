@@ -317,7 +317,7 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False
     return completed
 
 
-def format_content(status: str, name: str, code: str, short: bool, sms: str, email: str) -> str:
+def format_content(status: str, name: str, code: str, short: bool, sms: str='', email: str='') -> str:
     """
         simply used to format the message content for an email based on status
 
@@ -371,18 +371,19 @@ async def send_emails(mail_list: dict, status: str):
 
     _MESSAGES = []
     for code, info in mail_list.items():
-        msg = EmailMessage()
-        msg.set_content(format_content(status, info['name'], code))
-        msg['To'] = config.EMAIL_USERNAME
-        msg['From'] = _FROM
+        for email in info['email']:
+            msg = EmailMessage()
+            msg.set_content(format_content(status, info['name'], code, False, email=email))
+            msg['To'] = email
+            msg['From'] = _FROM
 
-        if status == 'open':
-            msg['Subject'] = _OPEN_SUBJECT
-        elif status == 'waitl':
-            msg['Subject'] = _WAIT_SUBJECT
+            if status == 'open':
+                msg['Subject'] = _OPEN_SUBJECT
+            elif status == 'waitl':
+                msg['Subject'] = _WAIT_SUBJECT
 
-        msg['Bcc'] = ','.join(info['email'])
-        _MESSAGES.append(msg)
+            # msg['Bcc'] = ','.join(info['email'])
+            _MESSAGES.append(msg)
 
     server = aiosmtplib.SMTP(
         hostname='smtp.gmail.com',
@@ -404,9 +405,8 @@ def send_text_messages(phone_list: dict, status: str):
     """
     _MESSAGES = []
     for code, info in phone_list.items():
-        msg = format_content(status, info['name'], code)
-
         for num in info['sms']:
+            msg = format_content(status, info['name'], code, True, sms=num)
             aws.publish(PhoneNumber=f"+1{num}", Message=msg)
 
 
