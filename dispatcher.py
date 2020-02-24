@@ -29,13 +29,12 @@ aws = boto3.client(
     aws_secret_access_key=config.AWS_SECRECTKEY,
     region_name="us-east-1"
 )
-# result = db.sms_notifs.insert_one({
-#     '454543': {
-#         'email': ['email@new.com'],
-#         'sms': ['555-555-5555'],
-#         'name': 'THE CLASS'
-#     }
-# })
+# db['notifications'].insert_one({
+#         'code': '',
+#         'email': [''],
+#         'sms': [''],
+#         'name': ''
+#     })
 
 # NOTE: Must update each term
 # TODO: Find a way to dynamically update without manual intervention
@@ -44,7 +43,7 @@ _WEBSOC = 'https://www.reg.uci.edu/perl/WebSoc?'
 _OPEN_SUBJECT = "[AntAlmanac Class Notification] Class opened"
 _WAIT_SUBJECT = "[AntAlmanac Class Notification] Class waitlisted"
 _CNCL_SUBJECT = "[AntAlmanac Class Notification] Class cancelled"
-_DISPATCH = False
+_DISPATCH = True
 # TODO: Determinie if we want to rotate headers
 _USER_AGENT_HEADERS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.106 Safari/537.36',
@@ -104,7 +103,7 @@ def fetch_notification_codes(debug: bool = False) -> dict:
             }, ...]
     """
     notifications = {}
-    result = db['test'].find({}, {'_id': 0})
+    result = db['notifications'].find({}, {'_id': 0})
     for doc in result:
         notifications[doc['code']] = {
             'email': doc['email'],
@@ -330,13 +329,13 @@ def format_content(status: str, name: str, code: str, short: bool, sms: str='', 
             string content for the body of the email
     """
 
-    webreg_url = shorten(_WEBSOC + urllib.parse.urlencode([('YearTerm', _TERM), ('CourseCodes', code)]))
-    add_back_url = shorten(config.API_URL + '?' + urllib.parse.urlencode(
+    webreg_url = _WEBSOC + urllib.parse.urlencode([('YearTerm', _TERM), ('CourseCodes', code)])
+    add_back_url = config.API_URL + '?' + urllib.parse.urlencode(
         {'code': code,
          'name': name,
          'sms': sms,
          'email': email,
-         'command': 'update'}))
+         'command': 'update'})
 
     if short:
         webreg_url = shorten(webreg_url)
@@ -373,7 +372,7 @@ async def send_emails(mail_list: dict, status: str):
     for code, info in mail_list.items():
         for email in info['email']:
             msg = EmailMessage()
-            msg.set_content(format_content(status, info['name'], code, False, email=email))
+            msg.set_content(format_content(status, info['name'], code, False, sms="", email=email))
             msg['To'] = email
             msg['From'] = _FROM
 
@@ -395,7 +394,7 @@ async def send_emails(mail_list: dict, status: str):
 
     await server.connect()
     tasks = [server.send_message(msg) for msg in _MESSAGES]
-    await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks, return_exceptions=True)
     await server.quit()
 
 
@@ -441,7 +440,7 @@ def print_time(begin, end, msg):
 
 # MAIN
 
-async def main(loop: bool = False):
+async def main(is_looping: bool = False):
     while True:
         notification_codes = fetch_notification_codes()
         chunks = chunk_codes(sorted(list(notification_codes)))
@@ -452,7 +451,7 @@ async def main(loop: bool = False):
         print('Waiting')
         await asyncio.sleep(random.randint(5, 10))
         print('Waited')
-        if loop == False:
+        if not is_looping:
             break
 
 
@@ -461,7 +460,9 @@ if __name__ == '__main__':
         production = sys.argv[1] == '--run'
     except IndexError:
         production = False
+
     if production:
         print('RUNNING PRODUCTION')
+
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main(production))
