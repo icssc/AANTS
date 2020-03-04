@@ -6,6 +6,7 @@ import urllib.parse
 
 import aiosmtplib
 import asyncio
+import logging
 import time
 import random
 import sys
@@ -44,7 +45,8 @@ _OPEN_SUBJECT = "[AntAlmanac Class Notification] Class opened"
 _WAIT_SUBJECT = "[AntAlmanac Class Notification] Class waitlisted"
 _CNCL_SUBJECT = "[AntAlmanac Class Notification] Class cancelled"
 _DISPATCH = True
-# TODO: Determinie if we want to rotate headers
+
+# TODO: Determine if we want to rotate headers
 _USER_AGENT_HEADERS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.106 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.106 Safari/537.36',
@@ -61,6 +63,22 @@ _USER_AGENT_HEADERS = [
 _CHUNK_SAFE = 900
 _CHUNK_OPTIMIZED = -1
 TINY_URL_API = "http://tinyurl.com/api-create.php"
+
+
+# Logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# create a file handler
+handler = logging.FileHandler('logs/dispatcher.log')
+handler.setLevel(logging.INFO)
+
+# create a logging format
+formatter = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
+handler.setFormatter(formatter)
+
+# add the file handler to the logger
+logger.addHandler(handler)
 
 
 # EXCEPTIONS
@@ -151,7 +169,7 @@ def chunk_codes(codes: list, optimize: bool = False, debug: bool = False):
             chunks.append(codes[start[0]:idx])
             start = end = (idx, code)
 
-        print(start, end)
+        # print(start, end)
 
     # capture final chunk if not caught by for loop
     if end[0] == len(codes) - 1:
@@ -258,7 +276,7 @@ def fetch_code_statuses(chunks: list, debug: bool = False):
                 if debug: print(f'Chunk({cc}): ', status)
                 statuses[status].append(cc)
         end_it = time.time()
-        print_time(begin_it, end_it, '>>> Iteration time:')
+        # print_time(begin_it, end_it, '>>> Iteration time:')
 
     end = time.time()
     if debug: print_time(begin, end, '>>> Fetch status time:')
@@ -300,15 +318,25 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False
     for code in statuses['open']:
         open_codes[code] = notification_codes[code]
     if _DISPATCH:
+        start = time.time()
         await send_emails(open_codes, 'open')
+        logger.info(f'DISPATCH OPEN EMAIL TIME (batch:{len(open_codes)}) = {(time.time() - start):.4f}')
+
+        start = time.time()
         send_text_messages(open_codes, 'open')
+        logger.info(f'DISPATCH OPEN SMS TIME (batch:{len(open_codes)}) = {(time.time() - start):.4f}')
 
     waitl_codes = {}
     for code in statuses['waitl']:
         waitl_codes[code] = notification_codes[code]
     if _DISPATCH:
-        await send_emails(waitl_codes, 'waitlisted')
+        start = time.time()
+        await send_emails(waitl_codes, 'waitl')
+        logger.info(f'DISPATCH WAITL EMAIL TIME (batch:{len(open_codes)}) = {(time.time() - start):.4f}')
+
+        start = time.time()
         send_text_messages(waitl_codes, 'waitl')
+        logger.info(f'DISPATCH WAITL SMS DISPATCH TIME (batch:{len(open_codes)}) = {(time.time() - start):.4f}')
 
     # back time complexity we ignore
     completed = open_codes
@@ -423,8 +451,8 @@ def remove_registered_notifications(completed_codes: dict, debug: bool = False) 
             }
     """
     for code, info in completed_codes.items():
-        print(code)
-        print(info['email'])
+        # print(code)
+        # print(info['email'])
         db['notifications'].update_one(
             {'code': code},
             {'$pull': {'email': {'$in': info['email']},
@@ -438,19 +466,46 @@ def print_time(begin, end, msg):
     print(f'{msg:<30}: {elapsed:<12}')
 
 
+def average_chunk_size(chunks: list) -> float:
+    """
+        function to get average chunk size for analysis
+    """
+    # sizes = []
+    # for chunk in chunks:
+    #     sizes.append(len(chunk))
+    sizes = [len(chunk) for chunk in chunks]
+    return sum(sizes) / len(sizes)
+
+
 # MAIN
 
 async def main(is_looping: bool = False):
     while True:
+        start = time.time()
         notification_codes = fetch_notification_codes()
-        chunks = chunk_codes(sorted(list(notification_codes)))
-        statuses = fetch_code_statuses(chunks)
+        logger.info(f'FETCH TIME = {(time.time() - start):.4f}')
 
+        if len(notification_codes) == 0:
+            await asyncio.sleep(180)
+            continue
+
+        start = time.time()
+        chunks = chunk_codes(sorted(list(notification_codes)))
+        logger.info(f'CHUNKING TIME (chunks:{len(chunks)}, avg_chunk_size:{average_chunk_size(chunks)}) = {(time.time() - start):.4f}')
+
+        start = time.time()
+        statuses = fetch_code_statuses(chunks)
+        logger.info(f'WBESOC FETCH TIME = {(time.time() - start):.4f}')
+
+        start = time.time()
         completed_notifications = await dispatch(statuses, notification_codes)
+        logger.info(f'TOTAL DISPATCH TIME = {(time.time() - start):.4f}')
+
         remove_registered_notifications(completed_notifications)
-        print('Waiting')
-        await asyncio.sleep(random.randint(5, 10))
-        print('Waited')
+        # print('Waiting')
+        # await asyncio.sleep(random.randint(10, 15)) # Useless??????
+        time.sleep(random.randint(10, 15))
+        # print('Waited')
         if not is_looping:
             break
 
