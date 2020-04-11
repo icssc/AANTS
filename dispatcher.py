@@ -121,7 +121,22 @@ def fetch_notification_codes(debug: bool = False) -> dict:
             }, ...]
     """
     notifications = {}
-    result = db['notifications'].find({}, {'_id': 0})
+    # result = db['notifications'].find({}, {'_id': 0})
+    # Aggregation to filter out codes that have no registered notification methods
+    # Collect lengths of arrays and filter codes with both <= 0
+    result = db['notifications'].aggregate(
+        [
+            {'$project' : {'_id' : 0, 'code' : 1, 'name' : 1, 
+            'email' : 1, 'sms' : 1, 
+            'email_sz' : {'$size' : '$email'}, 'sms_sz' : {'$size' : '$sms'}}},
+
+            {'$match' : {'$or' : [
+                {'email_sz' : {'$gt' : 0}},
+                {'sms_sz' : {'$gt' : 0}}
+            ]}}
+        ]
+    )
+
     for doc in result:
         notifications[doc['code']] = {
             'email': doc['email'],
@@ -202,7 +217,7 @@ def fetch_websoc(params: dict, debug: bool = False) -> BeautifulSoup:
     }
 
     begin_rsp = time.time()
-    rsp = requests.get(_WEBSOC, params=params, headers=headers)
+    rsp = requests.get(_WEBSOC, params=params, headers=headers, timeout=5)
 
     if rsp.status_code < 300 and debug:
         print(f'>>> Response code: {rsp.status_code}')
@@ -285,6 +300,7 @@ def fetch_code_statuses(chunks: list, debug: bool = False):
 
 async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False) -> dict:
     """
+        TODO: Fix email dispatching
         Takes each status and builds a dispatcher
 
         Args
@@ -318,9 +334,10 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False
     for code in statuses['open']:
         open_codes[code] = notification_codes[code]
     if _DISPATCH:
-        start = time.time()
-        await send_emails(open_codes, 'open')
-        logger.info(f'DISPATCH OPEN EMAIL TIME (batch:{len(open_codes)}) = {(time.time() - start):.4f}')
+        # TODO
+        # start = time.time()
+        # await send_emails(open_codes, 'open')
+        # logger.info(f'DISPATCH OPEN EMAIL TIME (batch:{len(open_codes)}) = {(time.time() - start):.4f}')
 
         start = time.time()
         send_text_messages(open_codes, 'open')
@@ -330,9 +347,9 @@ async def dispatch(statuses: dict, notification_codes: dict, debug: bool = False
     for code in statuses['waitl']:
         waitl_codes[code] = notification_codes[code]
     if _DISPATCH:
-        start = time.time()
-        await send_emails(waitl_codes, 'waitl')
-        logger.info(f'DISPATCH WAITL EMAIL TIME (batch:{len(open_codes)}) = {(time.time() - start):.4f}')
+        # start = time.time()
+        # await send_emails(waitl_codes, 'waitl')
+        # logger.info(f'DISPATCH WAITL EMAIL TIME (batch:{len(open_codes)}) = {(time.time() - start):.4f}')
 
         start = time.time()
         send_text_messages(waitl_codes, 'waitl')
@@ -451,9 +468,8 @@ def remove_registered_notifications(completed_codes: dict, debug: bool = False) 
             }
     """
     for code, info in completed_codes.items():
-        # print(code)
-        # print(info['email'])
-        db['notifications'].update_one(
+        # updated many in the case of duplicate entries; encounted bug from frontend duplicating entries
+        db['notifications'].update_many(
             {'code': code},
             {'$pull': {'email': {'$in': info['email']},
                        'sms': {'$in': info['sms']}
@@ -494,7 +510,12 @@ async def main(is_looping: bool = False):
         logger.info(f'CHUNKING TIME (chunks:{len(chunks)}, avg_chunk_size:{average_chunk_size(chunks)}) = {(time.time() - start):.4f}')
 
         start = time.time()
-        statuses = fetch_code_statuses(chunks)
+        try:
+            statuses = fetch_code_statuses(chunks)
+        except requests.exceptions.ConnectionError as e:
+            print(f'ERROR: WebSoc fetch connection error', '\n {e}')
+            time.sleep(1800)
+            continue
         logger.info(f'WBESOC FETCH TIME = {(time.time() - start):.4f}')
 
         start = time.time()
@@ -502,10 +523,7 @@ async def main(is_looping: bool = False):
         logger.info(f'TOTAL DISPATCH TIME = {(time.time() - start):.4f}')
 
         remove_registered_notifications(completed_notifications)
-        # print('Waiting')
-        # await asyncio.sleep(random.randint(10, 15)) # Useless??????
-        time.sleep(random.randint(10, 15))
-        # print('Waited')
+        time.sleep(random.randint(20, 30))
         if not is_looping:
             break
 
