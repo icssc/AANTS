@@ -18,6 +18,7 @@ import pymongo
 from bs4 import BeautifulSoup
 
 import requests
+from requests.exceptions import ReadTimeout
 
 # PROJECT
 import config
@@ -39,7 +40,7 @@ aws = boto3.client(
 
 # NOTE: Must update each term
 # TODO: Find a way to dynamically update without manual intervention
-_TERM = '2020-14'
+_TERM = '2020-92'
 _WEBSOC = 'https://www.reg.uci.edu/perl/WebSoc?'
 _OPEN_SUBJECT = "[AntAlmanac Class Notification] Class opened"
 _WAIT_SUBJECT = "[AntAlmanac Class Notification] Class waitlisted"
@@ -60,7 +61,7 @@ _USER_AGENT_HEADERS = [
     'Mozilla/5.0 (iPhone; CPU iPhone OS 12_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/22.0 Mobile/16B92 Safari/605.1.15'
 ]
 
-_CHUNK_SAFE = 900
+_CHUNK_SAFE = 2400
 _CHUNK_OPTIMIZED = -1
 TINY_URL_API = "http://tinyurl.com/api-create.php"
 
@@ -213,7 +214,7 @@ def fetch_websoc(params: dict, debug: bool = False) -> BeautifulSoup:
             a BeautifulSoup object
     """
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:72.0) Gecko/20100101 Firefox/72.0',
+        'User-Agent': random.choice(_USER_AGENT_HEADERS),
     }
 
     begin_rsp = time.time()
@@ -278,6 +279,10 @@ def fetch_code_statuses(chunks: list, debug: bool = False):
         except HttpResponseError as e:
             print(e)
             print('ERROR: chunk request failed', file=sys.stderr)
+            continue
+        except ReadTimeout as e:
+            print(e)
+            print('ERROR: chunk timed out', file=sys.stderr)
             continue
 
         # if debug: print(soup)
