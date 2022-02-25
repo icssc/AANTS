@@ -32,11 +32,7 @@ Refer to AntAlmanac internal documentation
 
 NOTE: Other versions of python may work but have not been tested. AANTS may also work on other operating systems but was developed, tested, and intended for running on linux. Other operating systems are not supported.
 
-### Create config.py
-
-This system requires multiple setup variables, refer to AntAlmanac internal documentation
-
-#### Create a python virtual environment
+### Create a python virtual environment
 
 Create a virtual environment of your choice and active it then install requirements.
 
@@ -52,3 +48,14 @@ This will run the dispatcher in production mode. When not in production mode the
 
 `python dispatcher.py`
 
+### Running on AWS
+We host an instance of AANTS on an EC2 instance, which runs during enrollment periods.
+To run AANTS on EC2, connect to the instance and use [tmux](https://linuxize.com/post/getting-started-with-tmux/) to create a persistant session.
+
+```bash
+cd aants
+tmux attach-session # If no session exists, create one with `tmux new -s AANTS`
+python dispatcher.py --run
+```
+
+Note: every quarter, you need to update the [`TERM` in `constants.py`](https://github.com/icssc-projects/AANTS/blob/5293711fe7017bd782a0c746652d916122959f31/constants.py#L13)
